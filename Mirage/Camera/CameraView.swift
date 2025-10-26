@@ -38,8 +38,13 @@ struct CameraView: View {
 
             makeCameraPreview()
 
-            VStack {
+            HStack {
                 makeCaptureButtonView()
+                    .padding(.bottom, 64)
+
+                Spacer()
+
+                makeCameraFlipButton()
                     .padding(.bottom, 64)
             }
             .frame(maxHeight: 200)
@@ -104,6 +109,17 @@ struct CameraView: View {
         }
         .padding(.top, 16)
         .padding(.horizontal)
+    }
+
+    private func makeCameraFlipButton() -> some View {
+        Button {
+            viewModel.didTapToggleCameraPosition()
+        } label: {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 20, weight: .medium))
+                .foregroundColor(.white)
+        }
+        .disabled(viewModel.isReconfiguring)
     }
 
     private func makeCaptureButtonView() -> some View {

@@ -13,6 +13,8 @@ final class CameraViewModel: NSObject, ObservableObject {
 
     // MARK: - Properties
     @Published var captureMode: CameraCaptureMode = .portrait
+    @Published var cameraPosition: CameraPosition = .back
+    @Published var isReconfiguring: Bool = false
 
     let cameraView: UIView = UIView()
 
@@ -76,18 +78,57 @@ final class CameraViewModel: NSObject, ObservableObject {
     nonisolated private func setupCaptureSession() {
         Task { @MainActor in
             let mode = self.captureMode
-            await self.configureSession(for: mode)
+            let position = self.cameraPosition
+            await self.configureSession(for: mode, position: position)
         }
     }
 
-    nonisolated private func configureSession(for mode: CameraCaptureMode) async {
+    nonisolated private func reconfigureSession(for mode: CameraCaptureMode, position: CameraPosition) async {
+        await withCheckedContinuation { continuation in
+            sessionQueue.async {
+                if self.captureSession.isRunning {
+                    self.captureSession.stopRunning()
+                }
+                continuation.resume()
+            }
+        }
+
+        await MainActor.run {
+            self.dataOutputSynchronizer = nil
+        }
+
+        await configureSession(for: mode, position: position)
+    }
+
+    nonisolated private func configureSession(for mode: CameraCaptureMode, position: CameraPosition) async {
         await withCheckedContinuation { continuation in
             sessionQueue.async {
                 self.captureSession.beginConfiguration()
+
+                // Remove existing inputs
+                for input in self.captureSession.inputs {
+                    self.captureSession.removeInput(input)
+                }
+
+                // Remove existing outputs
+                for output in self.captureSession.outputs {
+                    self.captureSession.removeOutput(output)
+                }
+
                 self.captureSession.sessionPreset = .high
 
-                guard let videoDevice = AVCaptureDevice.default(.builtInDualWideCamera, for: .video, position: .back), let videoInput = try? AVCaptureDeviceInput(device: videoDevice)
-                else {
+                // Select camera based on position
+                let videoDevice: AVCaptureDevice?
+                if position == .back {
+                    videoDevice = AVCaptureDevice.default(.builtInDualWideCamera, for: .video, position: .back)
+                    ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
+                } else {
+                    videoDevice = AVCaptureDevice.default(.builtInTrueDepthCamera, for: .video, position: .front)
+                    ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
+                }
+
+                guard let device = videoDevice,
+                      let videoInput = try? AVCaptureDeviceInput(device: device) else {
                     self.captureSession.commitConfiguration()
                     continuation.resume()
                     return
@@ -98,9 +139,9 @@ final class CameraViewModel: NSObject, ObservableObject {
                 }
 
                 do {
-                    try videoDevice.lockForConfiguration()
-                    videoDevice.videoZoomFactor = 1.0
-                    videoDevice.unlockForConfiguration()
+                    try device.lockForConfiguration()
+                    device.videoZoomFactor = 1.0
+                    device.unlockForConfiguration()
                 } catch {
                     print("Couldn't set zoom factor: \(error)")
                 }
@@ -196,6 +237,18 @@ final class CameraViewModel: NSObject, ObservableObject {
         }
     }
 
+    private func switchCamera(to position: CameraPosition) {
+        isReconfiguring = true
+        cameraPosition = position
+
+        Task {
+            await reconfigureSession(for: captureMode, position: position)
+            await MainActor.run {
+                isReconfiguring = false
+            }
+        }
+    }
+
     // MARK: - Frame / Session Controls
     func updateCameraViewFrame(_ frame: CGRect) {
         guard frame.width > 0 && frame.height > 0 else { return }
@@ -212,6 +265,11 @@ final class CameraViewModel: NSObject, ObservableObject {
         sessionQueue.async {
             self.captureSession.stopRunning()
         }
+    }
+
+    func didTapToggleCameraPosition() {
+        let newPosition: CameraPosition = cameraPosition == .back ? .front : .back
+        switchCamera(to: newPosition)
     }
 }
 
