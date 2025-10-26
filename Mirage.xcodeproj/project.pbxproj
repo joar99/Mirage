@@ -10,9 +10,22 @@
 		783B931E2EABEF4200B520A0 /* Mirage.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mirage.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		7896811B2EAE79A0004F9670 /* Exceptions for "Mirage" folder in "Mirage" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 783B931D2EABEF4200B520A0 /* Mirage */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		783B93202EABEF4200B520A0 /* Mirage */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7896811B2EAE79A0004F9670 /* Exceptions for "Mirage" folder in "Mirage" target */,
+			);
 			path = Mirage;
 			sourceTree = "<group>";
 		};
@@ -256,6 +269,8 @@
 				DEVELOPMENT_TEAM = 5K4VB6BWD8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Mirage/Info.plist;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Mirage requires access to your camera to take photos.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -288,6 +303,8 @@
 				DEVELOPMENT_TEAM = 5K4VB6BWD8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Mirage/Info.plist;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Mirage requires access to your camera to take photos.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

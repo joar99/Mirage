@@ -1,17 +1,12 @@
-//
-//  MirageApp.swift
-//  Mirage
-//
-//  Created by Jonas Sellami Arnesen on 24/10/2025.
-//
-
 import SwiftUI
 
 @main
 struct MirageApp: App {
+    @StateObject private var appCoordinator = AppCoordinator()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView(appCoordinator: appCoordinator)
         }
     }
 }
