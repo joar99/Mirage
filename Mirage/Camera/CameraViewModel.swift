@@ -15,27 +15,26 @@ final class CameraViewModel: NSObject, ObservableObject {
 
     let cameraView: UIView = UIView()
 
-    /// nessecary for BASIC camera functionality
+    // Core session infrastructure
     nonisolated(unsafe) let captureSession = AVCaptureSession()
     nonisolated private let sessionQueue = DispatchQueue(label: "camera.session")
     nonisolated(unsafe) private var previewLayer: AVCaptureVideoPreviewLayer?
 
-    // MARK: - Depth additions (only these are new)
+    // Outputs
     nonisolated private let depthOutput = AVCaptureDepthDataOutput()
+    nonisolated private let videoOutput = AVCaptureVideoDataOutput()
     private var dataOutputSynchronizer: AVCaptureDataOutputSynchronizer?
 
     weak var delegate: CameraViewModelCoordinating?
 
     // MARK: - Lifecycle
-
     override init() {
         super.init()
         setupCameraView()
         checkPermissionsAndSetup()
     }
 
-    // MARK: - Private Methods
-
+    // MARK: - Permissions
     private func checkPermissionsAndSetup() {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
@@ -44,13 +43,15 @@ final class CameraViewModel: NSObject, ObservableObject {
             AVCaptureDevice.requestAccess(for: .video) { granted in
                 if granted {
                     self.setupCaptureSession()
+                } else {
                 }
             }
         default:
-            break
+            print("Camera access denied or restricted")
         }
     }
 
+    // MARK: - Camera View
     private func setupCameraView() {
         cameraView.backgroundColor = .black
         let layer = AVCaptureVideoPreviewLayer(session: captureSession)
@@ -59,78 +60,74 @@ final class CameraViewModel: NSObject, ObservableObject {
         previewLayer = layer
     }
 
+    // MARK: - Session Setup
     nonisolated private func setupCaptureSession() {
         Task { @MainActor in
             let mode = self.captureMode
-            self.configureSessionOnQueue(for: mode)
+            await self.configureSession(for: mode)
         }
     }
 
-    nonisolated private func configureSessionOnQueue(for mode: CameraCaptureMode) {
-        sessionQueue.async {
-            self.captureSession.beginConfiguration()
-            self.captureSession.sessionPreset = .high
+    nonisolated private func configureSession(for mode: CameraCaptureMode) async {
+        await withCheckedContinuation { continuation in
+            sessionQueue.async {
+                self.captureSession.beginConfiguration()
+                self.captureSession.sessionPreset = .high
 
-            guard let videoDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
-                  let videoInput = try? AVCaptureDeviceInput(device: videoDevice)
-            else {
+                guard let videoDevice = AVCaptureDevice.default(.builtInDualWideCamera, for: .video, position: .back), let videoInput = try? AVCaptureDeviceInput(device: videoDevice)
+                else {
+                    self.captureSession.commitConfiguration()
+                    continuation.resume()
+                    return
+                }
+
+                if self.captureSession.canAddInput(videoInput) {
+                    self.captureSession.addInput(videoInput)
+                }
+
+                do {
+                    try videoDevice.lockForConfiguration()
+                    videoDevice.videoZoomFactor = 1.0
+                    videoDevice.unlockForConfiguration()
+                } catch {
+                    print("Couldn't set zoom factor: \(error)")
+                }
+
+                // Video output
+                self.videoOutput.alwaysDiscardsLateVideoFrames = true
+                self.videoOutput.videoSettings = [
+                    kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
+                ]
+                if self.captureSession.canAddOutput(self.videoOutput) {
+                    self.captureSession.addOutput(self.videoOutput)
+                    print("Added video output")
+                }
+
+                // Depth output
+                self.depthOutput.isFilteringEnabled = true
+                if self.captureSession.canAddOutput(self.depthOutput) {
+                    self.captureSession.addOutput(self.depthOutput)
+                }
+
                 self.captureSession.commitConfiguration()
-                return
+                continuation.resume()
             }
+        }
 
-            if self.captureSession.canAddInput(videoInput) {
-                self.captureSession.addInput(videoInput)
-            }
+        await awaitValidConnections(videoOutput: videoOutput, depthOutput: depthOutput)
 
-            let videoOutput = AVCaptureVideoDataOutput()
-            videoOutput.alwaysDiscardsLateVideoFrames = true
-            videoOutput.videoSettings = [
-                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
-            ]
+        let synchronizer = AVCaptureDataOutputSynchronizer(dataOutputs: [videoOutput, depthOutput])
+        synchronizer.setDelegate(self, queue: sessionQueue)
+        await MainActor.run {
+            self.dataOutputSynchronizer = synchronizer
+        }
 
-            if self.captureSession.canAddOutput(videoOutput) {
-                self.captureSession.addOutput(videoOutput)
-            }
-
-            if self.captureSession.canAddOutput(self.depthOutput) && mode == .portrait {
-                self.configureDepthOutput()
-            }
-
-            self.captureSession.commitConfiguration()
+        sessionQueue.async {
             self.captureSession.startRunning()
         }
     }
 
-    nonisolated private func configureDepthOutput() {
-        depthOutput.isFilteringEnabled = true
-        captureSession.addOutput(depthOutput)
-
-        guard let videoOutput = captureSession.outputs.first(where: { $0 is AVCaptureVideoDataOutput }) as? AVCaptureVideoDataOutput else {
-            print("❌ No video output found for depth synchronization.")
-            return
-        }
-
-        // Launch an async task to wait for connections, then build synchronizer
-        Task.detached { [weak self] in
-            guard let self else {
-                return
-            }
-
-            await self.awaitValidConnections(videoOutput: videoOutput, depthOutput: self.depthOutput)
-
-            let synchronizer = AVCaptureDataOutputSynchronizer(dataOutputs: [videoOutput, self.depthOutput])
-            synchronizer.setDelegate(self, queue: self.sessionQueue)
-
-            await MainActor.run { [weak self] in
-                self?.dataOutputSynchronizer = synchronizer
-            }
-
-            print("✅ Depth Output Configured & synchronized")
-        }
-    }
-
-    // MARK: - Public Methods
-
+    // MARK: - Frame / Session Controls
     func updateCameraViewFrame(_ frame: CGRect) {
         guard frame.width > 0 && frame.height > 0 else { return }
         previewLayer?.frame = frame
@@ -157,10 +154,8 @@ extension CameraViewModel: AVCaptureDataOutputSynchronizerDelegate {
             return
         }
 
-        let depthBuffer = depthData.depthDataMap
-        let width = CVPixelBufferGetWidth(depthBuffer)
-        let height = CVPixelBufferGetHeight(depthBuffer)
-        print("Depth frame: \(width)x\(height)")
+        /// TODO: Apply Gaussian Blur
+
     }
 }
 
