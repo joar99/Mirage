@@ -8,10 +8,8 @@ final class PortraitEffectProcessor {
     private let ciContext = CIContext()
 
     func applyPortraitEffect(to videoBuffer: CVPixelBuffer, depthData: AVDepthData?, personMask: CVPixelBuffer) -> CVPixelBuffer? {
-
         let inputImage = CIImage(cvPixelBuffer: videoBuffer)
         var depthImage: CIImage? = nil
-
         if let depthData {
             let converted = depthData.converting(toDepthDataType: kCVPixelFormatType_DisparityFloat32)
             depthImage = CIImage(cvPixelBuffer: converted.depthDataMap)
@@ -19,24 +17,25 @@ final class PortraitEffectProcessor {
 
         let maskImage = CIImage(cvPixelBuffer: personMask)
 
-        let blurred = inputImage.applyingGaussianBlur(sigma: 15)
+        let videoWidth = CGFloat(CVPixelBufferGetWidth(videoBuffer))
+        let videoHeight = CGFloat(CVPixelBufferGetHeight(videoBuffer))
+        let maskWidth = maskImage.extent.width
+        let maskHeight = maskImage.extent.height
 
-        guard let composite = CIFilter(name: "CIBlendWithMask", parameters: [ kCIInputImageKey: blurred, kCIInputBackgroundImageKey: inputImage, kCIInputMaskImageKey: maskImage ])?.outputImage else {
+        let scaleX = videoWidth / maskWidth
+        let scaleY = videoHeight / maskHeight
+        let scaledMask = maskImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+
+        let blurred = inputImage.applyingGaussianBlur(sigma: 15)
+        guard let composite = CIFilter(name: "CIBlendWithMask", parameters: [kCIInputImageKey: blurred, kCIInputBackgroundImageKey: inputImage, kCIInputMaskImageKey: scaledMask])?.outputImage else {
             return nil
         }
 
-        // Step 3: Render to pixel buffer for display
         var outputPixelBuffer: CVPixelBuffer?
-        let status = CVPixelBufferCreate(nil,
-                                         CVPixelBufferGetWidth(videoBuffer),
-                                         CVPixelBufferGetHeight(videoBuffer),
-                                         kCVPixelFormatType_32BGRA,
-                                         nil,
-                                         &outputPixelBuffer)
+        let status = CVPixelBufferCreate(nil, CVPixelBufferGetWidth(videoBuffer), CVPixelBufferGetHeight(videoBuffer), kCVPixelFormatType_32BGRA, nil, &outputPixelBuffer)
         guard status == kCVReturnSuccess, let outputBuffer = outputPixelBuffer else {
             return nil
         }
-
         ciContext.render(composite, to: outputBuffer)
         return outputBuffer
     }
