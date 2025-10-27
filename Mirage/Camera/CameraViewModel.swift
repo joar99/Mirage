@@ -90,8 +90,10 @@ final class CameraViewModel: NSObject, ObservableObject {
 
         previewLayer.frame = frame
 
-        if let connection = previewLayer.connection, connection.isVideoOrientationSupported {
-            connection.videoOrientation = .portrait
+        if let connection = previewLayer.connection {
+            if connection.isVideoRotationAngleSupported(90) {
+                connection.videoRotationAngle = 90
+            }
         }
     }
 
