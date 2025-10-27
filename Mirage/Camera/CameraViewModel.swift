@@ -19,6 +19,9 @@ final class CameraViewModel: NSObject, ObservableObject {
     private var isProcessingBlur = false
     private var latestMask: CVPixelBuffer?
 
+    private var frameCounter = 0
+    private let visionFrameInterval = 3
+
     private var isRunningVision = false
 
     let cameraView: UIView = UIView()
@@ -161,16 +164,22 @@ extension CameraViewModel: CameraSessionControllerDelegate {
         print("Camera session stopped")
     }
 
-    func cameraSessionController(_ controller: CameraSessionController, didOutput videoBuffer: CVPixelBuffer, depthData: AVDepthData?) {
+    func cameraSessionController(_ controller: CameraSessionController,
+                                didOutput videoBuffer: CVPixelBuffer,
+                                depthData: AVDepthData?) {
         lastVideoBuffer = videoBuffer
         lastDepthData = depthData
 
-        guard !isRunningVision else {
-            return
-        }
+        frameCounter += 1
 
-        isRunningVision = true
-        visionProcessor.runSegmentation(on: videoBuffer)
+        // Only run vision every 3rd frame, reuse last mask
+        if frameCounter % visionFrameInterval == 0 && !isRunningVision {
+            isRunningVision = true
+            visionProcessor.runSegmentation(on: videoBuffer)
+        } else if latestMask != nil && !isProcessingBlur {
+            // Still process blur with old mask
+            processNextFrame()
+        }
     }
 
     func cameraSessionController(_ controller: CameraSessionController, didFailWith error: Error) {
