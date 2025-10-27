@@ -58,6 +58,7 @@ final class CameraViewModel: NSObject, ObservableObject {
                 if granted {
                     self.setupCaptureSession()
                 } else {
+                    return
                 }
             }
         default:
