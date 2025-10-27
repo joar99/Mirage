@@ -19,8 +19,7 @@ final class CameraViewModel: NSObject, ObservableObject {
     let cameraView: UIView = UIView()
 
     private let sessionController = CameraSessionController()
-    private var segmentationRequest: VNGeneratePersonSegmentationRequest?
-    private let visionQueue = DispatchQueue(label: "camera.vision")
+    private let visionProcessor = VisionProcessor()
 
     weak var delegate: CameraViewModelCoordinating?
 
@@ -28,21 +27,12 @@ final class CameraViewModel: NSObject, ObservableObject {
     override init() {
         super.init()
         sessionController.delegate = self
-        setupVision()
+        visionProcessor.delegate = self
         setupCameraView()
         checkPermissionsAndSetup()
     }
 
-    // MARK: - Setup
-    private func setupVision() {
-        segmentationRequest = VNGeneratePersonSegmentationRequest()
-        segmentationRequest?.qualityLevel = .accurate
-        segmentationRequest?.outputPixelFormat = kCVPixelFormatType_OneComponent8
-        if let latestRevision = VNGeneratePersonSegmentationRequest.supportedRevisions.last {
-            segmentationRequest?.revision = latestRevision
-        }
-    }
-
+    // MARK: - Camera setup
     private func setupCameraView() {
         cameraView.backgroundColor = .black
         let layer = sessionController.makePreviewLayer()
@@ -82,64 +72,6 @@ final class CameraViewModel: NSObject, ObservableObject {
             }
         }
     }
-
-    nonisolated private func runVisionSegmentation(on pixelBuffer: CVPixelBuffer) {
-        struct UnsafeCVPixelBuffer: @unchecked Sendable {
-            let buffer: CVPixelBuffer
-        }
-
-        let safeBuffer = UnsafeCVPixelBuffer(buffer: pixelBuffer)
-
-        Task { @MainActor [weak self] in
-            guard let request = self?.segmentationRequest else { return }
-
-            self?.visionQueue.async {
-                let handler = VNImageRequestHandler(cvPixelBuffer: safeBuffer.buffer, orientation: .up, options: [:])
-                do {
-                    try handler.perform([request])
-                    guard let result = request.results?.first as? VNPixelBufferObservation else {
-                        return
-                    }
-
-                    let mask = result.pixelBuffer
-
-                    self?.analyzePersonMask(mask)
-
-                } catch {
-                    print("❌ Vision segmentation error: \(error)")
-                }
-            }
-        }
-    }
-
-    nonisolated private func analyzePersonMask(_ mask: CVPixelBuffer) {
-        CVPixelBufferLockBaseAddress(mask, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(mask, .readOnly) }
-
-        guard let baseAddress = CVPixelBufferGetBaseAddress(mask) else {
-            return
-        }
-
-        let width = CVPixelBufferGetWidth(mask)
-        let height = CVPixelBufferGetHeight(mask)
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(mask)
-        let ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
-
-        var total: Int = 0
-        for y in stride(from: 0, to: height, by: 8) {
-            let row = ptr.advanced(by: y * bytesPerRow)
-            for x in stride(from: 0, to: width, by: 8) {
-                total += Int(row[x])
-            }
-        }
-
-        let mean = Double(total) / Double((width / 8) * (height / 8) * 255)
-
-        if mean > 0.01 {
-            print("Person detected (mean mask intensity: \(String(format: "%.2f", mean)))")
-        }
-    }
-
 }
 
 // MARK: - CameraSessionControllerDelegate
@@ -156,18 +88,31 @@ extension CameraViewModel: CameraSessionControllerDelegate {
     func cameraSessionController(_ controller: CameraSessionController,
                                  didOutput videoBuffer: CVPixelBuffer,
                                  depthData: AVDepthData?) {
-        runVisionSegmentation(on: videoBuffer)
+        visionProcessor.runSegmentation(on: videoBuffer)
     }
 
-    func cameraSessionController(_ controller: CameraSessionController, didFailWith error: Error) {
+    func cameraSessionController(_ controller: CameraSessionController,
+                                 didFailWith error: Error) {
         print("Camera error: \(error)")
     }
 }
 
-// MARK: Mocking
+// MARK: - VisionProcessorDelegate
 
+extension CameraViewModel: VisionProcessorDelegate {
+    func visionProcessor(_ processor: VisionProcessor, didDetectPersonWithMask mask: CVPixelBuffer) {
+        // Currently, we only log; original logic already printed in analyzePersonMask.
+    }
+
+    func visionProcessor(_ processor: VisionProcessor, didFailWith error: Error) {
+        print("Vision segmentation error: \(error)")
+    }
+}
+
+// MARK: - Mocking
 extension CameraViewModel {
     static func mockModel() -> CameraViewModel {
         return CameraViewModel()
     }
 }
+
