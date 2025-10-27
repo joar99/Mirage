@@ -18,47 +18,48 @@ final class CameraViewModel: NSObject, ObservableObject {
 
     let cameraView: UIView = UIView()
 
-    // Core session infrastructure
-    nonisolated(unsafe) let captureSession = AVCaptureSession()
-    nonisolated private let sessionQueue = DispatchQueue(label: "camera.session")
-    nonisolated(unsafe) private var previewLayer: AVCaptureVideoPreviewLayer?
-
-    // Outputs
-    nonisolated private let depthOutput = AVCaptureDepthDataOutput()
-    nonisolated private let videoOutput = AVCaptureVideoDataOutput()
-    private var dataOutputSynchronizer: AVCaptureDataOutputSynchronizer?
-
-    // Vision
-    private let visionQueue = DispatchQueue(label: "camera.vision")
+    private let sessionController = CameraSessionController()
     private var segmentationRequest: VNGeneratePersonSegmentationRequest?
+    private let visionQueue = DispatchQueue(label: "camera.vision")
 
     weak var delegate: CameraViewModelCoordinating?
 
     // MARK: - Lifecycle
     override init() {
         super.init()
+        sessionController.delegate = self
+        setupVision()
+        setupCameraView()
+        checkPermissionsAndSetup()
+    }
+
+    // MARK: - Setup
+    private func setupVision() {
         segmentationRequest = VNGeneratePersonSegmentationRequest()
         segmentationRequest?.qualityLevel = .accurate
         segmentationRequest?.outputPixelFormat = kCVPixelFormatType_OneComponent8
         if let latestRevision = VNGeneratePersonSegmentationRequest.supportedRevisions.last {
             segmentationRequest?.revision = latestRevision
         }
-
-        setupCameraView()
-        checkPermissionsAndSetup()
     }
 
-    // MARK: - Permissions
+    private func setupCameraView() {
+        cameraView.backgroundColor = .black
+        let layer = sessionController.makePreviewLayer()
+        cameraView.layer.addSublayer(layer)
+    }
+
     private func checkPermissionsAndSetup() {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
-            setupCaptureSession()
+            sessionController.setupSession(mode: captureMode, position: cameraPosition)
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { granted in
                 if granted {
-                    self.setupCaptureSession()
-                } else {
-                    return
+                    Task { @MainActor in
+                        self.sessionController.setupSession(mode: self.captureMode,
+                                                            position: self.cameraPosition)
+                    }
                 }
             }
         default:
@@ -66,118 +67,19 @@ final class CameraViewModel: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Camera View
-    private func setupCameraView() {
-        cameraView.backgroundColor = .black
-        let layer = AVCaptureVideoPreviewLayer(session: captureSession)
-        layer.videoGravity = .resizeAspectFill
-        cameraView.layer.addSublayer(layer)
-        previewLayer = layer
+    // MARK: - UI Interaction
+    func updateCameraViewFrame(_ frame: CGRect) {
+        sessionController.updatePreviewFrame(frame)
     }
 
-    // MARK: - Session Setup
-    nonisolated private func setupCaptureSession() {
-        Task { @MainActor in
-            let mode = self.captureMode
-            let position = self.cameraPosition
-            await self.configureSession(for: mode, position: position)
-        }
-    }
-
-    nonisolated private func reconfigureSession(for mode: CameraCaptureMode, position: CameraPosition) async {
-        await withCheckedContinuation { continuation in
-            sessionQueue.async {
-                if self.captureSession.isRunning {
-                    self.captureSession.stopRunning()
-                }
-                continuation.resume()
+    func didTapToggleCameraPosition() {
+        isReconfiguring = true
+        Task {
+            await sessionController.switchCamera()
+            await MainActor.run {
+                self.isReconfiguring = false
+                self.cameraPosition = self.cameraPosition == .back ? .front : .back
             }
-        }
-
-        await MainActor.run {
-            self.dataOutputSynchronizer = nil
-        }
-
-        await configureSession(for: mode, position: position)
-    }
-
-    nonisolated private func configureSession(for mode: CameraCaptureMode, position: CameraPosition) async {
-        await withCheckedContinuation { continuation in
-            sessionQueue.async {
-                self.captureSession.beginConfiguration()
-
-                // Remove existing inputs
-                for input in self.captureSession.inputs {
-                    self.captureSession.removeInput(input)
-                }
-
-                // Remove existing outputs
-                for output in self.captureSession.outputs {
-                    self.captureSession.removeOutput(output)
-                }
-
-                self.captureSession.sessionPreset = .high
-
-                // Select camera based on position
-                let videoDevice: AVCaptureDevice?
-                if position == .back {
-                    videoDevice = AVCaptureDevice.default(.builtInDualWideCamera, for: .video, position: .back)
-                    ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
-                } else {
-                    videoDevice = AVCaptureDevice.default(.builtInTrueDepthCamera, for: .video, position: .front)
-                    ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
-                }
-
-                guard let device = videoDevice,
-                      let videoInput = try? AVCaptureDeviceInput(device: device) else {
-                    self.captureSession.commitConfiguration()
-                    continuation.resume()
-                    return
-                }
-
-                if self.captureSession.canAddInput(videoInput) {
-                    self.captureSession.addInput(videoInput)
-                }
-
-                do {
-                    try device.lockForConfiguration()
-                    device.videoZoomFactor = 1.0
-                    device.unlockForConfiguration()
-                } catch {
-                    print("Couldn't set zoom factor: \(error)")
-                }
-
-                // Video output
-                self.videoOutput.alwaysDiscardsLateVideoFrames = true
-                self.videoOutput.videoSettings = [
-                    kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
-                ]
-                if self.captureSession.canAddOutput(self.videoOutput) {
-                    self.captureSession.addOutput(self.videoOutput)
-                    print("Added video output")
-                }
-
-                // Depth output
-                self.depthOutput.isFilteringEnabled = true
-                if self.captureSession.canAddOutput(self.depthOutput) {
-                    self.captureSession.addOutput(self.depthOutput)
-                }
-
-                self.captureSession.commitConfiguration()
-                continuation.resume()
-            }
-        }
-
-        await awaitValidConnections(videoOutput: videoOutput, depthOutput: depthOutput)
-
-        let synchronizer = AVCaptureDataOutputSynchronizer(dataOutputs: [videoOutput, depthOutput])
-        synchronizer.setDelegate(self, queue: sessionQueue)
-        await MainActor.run {
-            self.dataOutputSynchronizer = synchronizer
-        }
-
-        sessionQueue.async {
-            self.captureSession.startRunning()
         }
     }
 
@@ -238,78 +140,27 @@ final class CameraViewModel: NSObject, ObservableObject {
         }
     }
 
-    private func switchCamera(to position: CameraPosition) {
-        isReconfiguring = true
-        cameraPosition = position
-
-        Task {
-            await reconfigureSession(for: captureMode, position: position)
-            await MainActor.run {
-                isReconfiguring = false
-            }
-        }
-    }
-
-    // MARK: - Frame / Session Controls
-    func updateCameraViewFrame(_ frame: CGRect) {
-        guard frame.width > 0 && frame.height > 0 else { return }
-        previewLayer?.frame = frame
-    }
-
-    nonisolated func startSession() {
-        sessionQueue.async {
-            self.captureSession.startRunning()
-        }
-    }
-
-    nonisolated func stopSession() {
-        sessionQueue.async {
-            self.captureSession.stopRunning()
-        }
-    }
-
-    func didTapToggleCameraPosition() {
-        let newPosition: CameraPosition = cameraPosition == .back ? .front : .back
-        switchCamera(to: newPosition)
-    }
 }
 
-// MARK: - AVCaptureDataOutputSynchronizerDelegate
+// MARK: - CameraSessionControllerDelegate
 
-extension CameraViewModel: AVCaptureDataOutputSynchronizerDelegate {
-    nonisolated func dataOutputSynchronizer(_ synchronizer: AVCaptureDataOutputSynchronizer, didOutput synchronizedDataCollection: AVCaptureSynchronizedDataCollection) {
-        guard let depthData = (synchronizedDataCollection.synchronizedData(for: depthOutput) as? AVCaptureSynchronizedDepthData)?.depthData, let videoData = (synchronizedDataCollection.synchronizedData(for: videoOutput) as? AVCaptureSynchronizedSampleBufferData)?.sampleBuffer else {
-            return
-        }
-
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(videoData) else {
-            return
-        }
-
-
-        runVisionSegmentation(on: pixelBuffer)
-
-        // TODO: Later use both mask + depth to apply Gaussian blur
+extension CameraViewModel: CameraSessionControllerDelegate {
+    func cameraSessionControllerDidStart(_ controller: CameraSessionController) {
+        print("Camera session started")
     }
-}
-// MARK: Await AVCaptureConnections
 
-extension CameraViewModel {
-    // Waits asynchronously until both outputs have valid AVCaptureConnections.
-    nonisolated private func awaitValidConnections(videoOutput: AVCaptureVideoDataOutput, depthOutput: AVCaptureDepthDataOutput) async {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            func checkReady() {
-                if videoOutput.connection(with: .video) != nil &&
-                   depthOutput.connection(with: .depthData) != nil {
-                    continuation.resume()
-                } else {
-                    sessionQueue.asyncAfter(deadline: .now() + 0.02) {
-                        checkReady()
-                    }
-                }
-            }
-            checkReady()
-        }
+    func cameraSessionControllerDidStop(_ controller: CameraSessionController) {
+        print("Camera session stopped")
+    }
+
+    func cameraSessionController(_ controller: CameraSessionController,
+                                 didOutput videoBuffer: CVPixelBuffer,
+                                 depthData: AVDepthData?) {
+        runVisionSegmentation(on: videoBuffer)
+    }
+
+    func cameraSessionController(_ controller: CameraSessionController, didFailWith error: Error) {
+        print("Camera error: \(error)")
     }
 }
 

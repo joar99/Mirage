@@ -52,12 +52,6 @@ struct CameraView: View {
             .background(Color.black.opacity(0.6))
         }
         .background(Color.black)
-        .onAppear {
-            viewModel.startSession()
-        }
-        .onDisappear {
-            viewModel.stopSession()
-        }
         .ignoresSafeArea(edges: .all)
     }
 
