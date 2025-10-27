@@ -30,7 +30,7 @@ final class VisionProcessor {
 
     private func setupVision() {
         segmentationRequest = VNGeneratePersonSegmentationRequest()
-        segmentationRequest?.qualityLevel = .accurate
+        segmentationRequest?.qualityLevel = .balanced
         segmentationRequest?.outputPixelFormat = kCVPixelFormatType_OneComponent8
         if let latestRevision = VNGeneratePersonSegmentationRequest.supportedRevisions.last {
             segmentationRequest?.revision = latestRevision

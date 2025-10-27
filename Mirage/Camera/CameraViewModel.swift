@@ -99,6 +99,7 @@ final class CameraViewModel: NSObject, ObservableObject {
 
     func didTapToggleCameraPosition() {
         isReconfiguring = true
+        portraitProcessor.resetTemporalSmoothing()
         Task {
             await sessionController.switchCamera()
             await MainActor.run {
