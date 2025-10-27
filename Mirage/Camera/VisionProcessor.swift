@@ -51,10 +51,15 @@ final class VisionProcessor {
                 do {
                     try handler.perform([request])
 
-                    guard let result = request.results?.first as? VNPixelBufferObservation else { return }
+                    guard let result = request.results?.first as? VNPixelBufferObservation else {
+                        return
+                    }
                     let mask = result.pixelBuffer
 
-                    self.analyzePersonMask(mask)
+                    let detected = self.analyzePersonMask(mask)
+                    guard detected else {
+                        return
+                    }
 
                     let safeMask = UnsafeCVPixelBufferBox(buffer: mask)
                     Task { @MainActor [weak self] in
@@ -76,18 +81,20 @@ final class VisionProcessor {
         }
     }
 
-    nonisolated private func analyzePersonMask(_ mask: CVPixelBuffer) {
+    nonisolated private func analyzePersonMask(_ mask: CVPixelBuffer) -> Bool {
         CVPixelBufferLockBaseAddress(mask, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(mask, .readOnly) }
 
-        guard let baseAddress = CVPixelBufferGetBaseAddress(mask) else { return }
+        guard let baseAddress = CVPixelBufferGetBaseAddress(mask) else {
+            return false
+        }
 
         let width = CVPixelBufferGetWidth(mask)
         let height = CVPixelBufferGetHeight(mask)
         let bytesPerRow = CVPixelBufferGetBytesPerRow(mask)
         let ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
 
-        var total: Int = 0
+        var total = 0
         for y in stride(from: 0, to: height, by: 8) {
             let row = ptr.advanced(by: y * bytesPerRow)
             for x in stride(from: 0, to: width, by: 8) {
@@ -97,8 +104,6 @@ final class VisionProcessor {
 
         let mean = Double(total) / Double((width / 8) * (height / 8) * 255)
 
-        if mean > 0.01 {
-            print("Person detected (mean mask intensity: \(String(format: "%.2f", mean)))")
-        }
+        return mean > 0.02
     }
 }
