@@ -2,7 +2,6 @@ import AVFoundation
 import CoreImage
 import UIKit
 
-@MainActor
 final class PortraitEffectProcessor {
 
     private let ciContext = CIContext()
@@ -26,7 +25,7 @@ final class PortraitEffectProcessor {
         let scaleY = videoHeight / maskHeight
         let scaledMask = maskImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
 
-        let blurred = inputImage.applyingGaussianBlur(sigma: 15)
+        let blurred = inputImage.applyingGaussianBlur(sigma: 8)
         guard let composite = CIFilter(name: "CIBlendWithMask", parameters: [kCIInputImageKey: blurred, kCIInputBackgroundImageKey: inputImage, kCIInputMaskImageKey: scaledMask])?.outputImage else {
             return nil
         }

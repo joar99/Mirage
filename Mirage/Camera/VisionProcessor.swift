@@ -1,18 +1,23 @@
 @preconcurrency import Vision
 import AVFoundation
 
+public struct UnsafeDepthDataBox: @unchecked Sendable {
+    let depthData: AVDepthData
+}
+
+public struct UnsafeCVPixelBufferBox: @unchecked Sendable {
+    let buffer: CVPixelBuffer
+}
+
 @MainActor
 protocol VisionProcessorDelegate: AnyObject {
     func visionProcessor(_ processor: VisionProcessor, didDetectPersonWithMask mask: CVPixelBuffer)
     func visionProcessor(_ processor: VisionProcessor, didFailWith error: Error)
+    func visionProcessorDidNotDetectPerson(_ processor: VisionProcessor)
 }
 
 @MainActor
 final class VisionProcessor {
-
-    private struct UnsafeCVPixelBufferBox: @unchecked Sendable {
-        let buffer: CVPixelBuffer
-    }
 
     weak var delegate: VisionProcessorDelegate?
 
@@ -58,6 +63,12 @@ final class VisionProcessor {
 
                     let detected = self.analyzePersonMask(mask)
                     guard detected else {
+                        Task { @MainActor [weak self] in
+                            guard let self else {
+                                return
+                            }
+                            self.delegate?.visionProcessorDidNotDetectPerson(self)
+                        }
                         return
                     }
 

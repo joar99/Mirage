@@ -16,6 +16,11 @@ final class CameraViewModel: NSObject, ObservableObject {
     @Published var cameraPosition: CameraPosition = .back
     @Published var isReconfiguring: Bool = false
 
+    private var isProcessingBlur = false
+    private var latestMask: CVPixelBuffer?
+
+    private var isRunningVision = false
+
     let cameraView: UIView = UIView()
     private let previewImageView = UIImageView()
 
@@ -101,6 +106,45 @@ final class CameraViewModel: NSObject, ObservableObject {
             }
         }
     }
+
+    private func processNextFrame() {
+        guard let mask = latestMask, let videoBuffer = lastVideoBuffer, let depthData = lastDepthData else {
+            return
+        }
+
+        let safeMask = UnsafeCVPixelBufferBox(buffer: mask)
+        let safeVideoBuffer = UnsafeCVPixelBufferBox(buffer: videoBuffer)
+        let safeDepthData = UnsafeDepthDataBox(depthData: depthData)
+        let processor = self.portraitProcessor
+
+        isProcessingBlur = true
+
+        DispatchQueue.global(qos: .userInteractive).async { [weak self] in
+            guard let self else {
+                return
+            }
+
+            if let blurred = processor.applyPortraitEffect(to: safeVideoBuffer.buffer, depthData: safeDepthData.depthData, personMask: safeMask.buffer) {
+                let safeBlurred = UnsafeCVPixelBufferBox(buffer: blurred)
+
+                Task { @MainActor [weak self] in
+                    guard let self else {
+                        return
+                    }
+                    self.displayBlurredFrame(safeBlurred.buffer)
+                    self.isProcessingBlur = false
+
+                    if self.latestMask != nil {
+                        self.processNextFrame()
+                    }
+                }
+            } else {
+                Task { @MainActor [weak self] in
+                    self?.isProcessingBlur = false
+                }
+            }
+        }
+    }
 }
 
 // MARK: - CameraSessionControllerDelegate
@@ -117,6 +161,12 @@ extension CameraViewModel: CameraSessionControllerDelegate {
     func cameraSessionController(_ controller: CameraSessionController, didOutput videoBuffer: CVPixelBuffer, depthData: AVDepthData?) {
         lastVideoBuffer = videoBuffer
         lastDepthData = depthData
+
+        guard !isRunningVision else {
+            return
+        }
+
+        isRunningVision = true
         visionProcessor.runSegmentation(on: videoBuffer)
     }
 
@@ -128,16 +178,19 @@ extension CameraViewModel: CameraSessionControllerDelegate {
 // MARK: - VisionProcessorDelegate
 
 extension CameraViewModel: VisionProcessorDelegate {
+    func visionProcessorDidNotDetectPerson(_ processor: VisionProcessor) {
+        isRunningVision = false
+    }
+    
     func visionProcessor(_ processor: VisionProcessor, didDetectPersonWithMask mask: CVPixelBuffer) {
-        guard let latestVideoBuffer = lastVideoBuffer, let latestDepthData = lastDepthData else {
+        isRunningVision = false
+        latestMask = mask
+
+        guard !isProcessingBlur else {
             return
         }
 
-        if let blurred = portraitProcessor.applyPortraitEffect(to: latestVideoBuffer, depthData: latestDepthData, personMask: mask) {
-            DispatchQueue.main.async {
-                self.displayBlurredFrame(blurred)
-            }
-        }
+        processNextFrame()
     }
 
     func visionProcessor(_ processor: VisionProcessor, didFailWith error: Error) {
@@ -151,4 +204,3 @@ extension CameraViewModel {
         return CameraViewModel()
     }
 }
-
