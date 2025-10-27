@@ -104,6 +104,6 @@ final class VisionProcessor {
 
         let mean = Double(total) / Double((width / 8) * (height / 8) * 255)
 
-        return mean > 0.02
+        return mean > 0.05
     }
 }
