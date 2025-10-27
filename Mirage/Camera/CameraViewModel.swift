@@ -85,14 +85,11 @@ extension CameraViewModel: CameraSessionControllerDelegate {
         print("Camera session stopped")
     }
 
-    func cameraSessionController(_ controller: CameraSessionController,
-                                 didOutput videoBuffer: CVPixelBuffer,
-                                 depthData: AVDepthData?) {
+    func cameraSessionController(_ controller: CameraSessionController, didOutput videoBuffer: CVPixelBuffer, depthData: AVDepthData?) {
         visionProcessor.runSegmentation(on: videoBuffer)
     }
 
-    func cameraSessionController(_ controller: CameraSessionController,
-                                 didFailWith error: Error) {
+    func cameraSessionController(_ controller: CameraSessionController, didFailWith error: Error) {
         print("Camera error: \(error)")
     }
 }
