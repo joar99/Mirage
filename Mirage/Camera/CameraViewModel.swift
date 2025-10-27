@@ -38,12 +38,6 @@ final class CameraViewModel: NSObject, ObservableObject {
     }
 
     // MARK: - Camera setup
-    /*private func setupCameraView() {
-        cameraView.backgroundColor = .black
-        let layer = sessionController.makePreviewLayer()
-        cameraView.layer.addSublayer(layer)
-    }*/
-
     private func setupCameraView() {
         cameraView.backgroundColor = .black
 
@@ -59,7 +53,7 @@ final class CameraViewModel: NSObject, ObservableObject {
 
     func displayBlurredFrame(_ buffer: CVPixelBuffer) {
         guard let uiImage = portraitProcessor.makeUIImage(from: buffer) else { return }
-        UIView.transition(with: previewImageView, duration: 0.1, options: .transitionCrossDissolve, animations: { self.previewImageView.image = uiImage})
+        self.previewImageView.image = uiImage
     }
 
     private func checkPermissionsAndSetup() {

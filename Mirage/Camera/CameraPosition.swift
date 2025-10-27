@@ -1,6 +1,6 @@
 import AVFoundation
 
-enum CameraPosition: String, CaseIterable, Identifiable {
+enum CameraPosition: String, CaseIterable, Identifiable, Sendable {
     case front
     case back
 
