@@ -28,7 +28,7 @@ final class CameraViewModel: NSObject, ObservableObject {
     private let visionProcessor = VisionProcessor()
 
     // private var portraitProcessor = PortraitEffectProcessor()
-    private var portraitProcessor = MetalPortraitProcessor(config: .init(enableAsync: false, bokehStrength: 1.0))!
+    private var portraitProcessor = MetalPortraitProcessor(config: .init(enableAsync: false))!
     private var lastVideoBuffer: CVPixelBuffer?
     private var lastDepthData: AVDepthData?
 
