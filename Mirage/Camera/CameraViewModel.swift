@@ -146,7 +146,9 @@ extension CameraViewModel: CameraSessionControllerDelegate {
 
 extension CameraViewModel: VisionProcessorDelegate {
     func visionProcessorDidNotDetectPerson(_ processor: VisionProcessor) {
-        Task { await visionGate.done() }
+        Task {
+            await visionGate.done()
+        }
     }
 
     func visionProcessor(_ processor: VisionProcessor, didDetectPersonWithMask mask: CVPixelBuffer) {
