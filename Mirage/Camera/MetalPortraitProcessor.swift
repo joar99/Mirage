@@ -25,7 +25,8 @@ final class MetalPortraitProcessor {
 
     // Pipelines
     private let pDownsample: MTLComputePipelineState
-    private let pBlur: MTLComputePipelineState
+    private let pBlurH: MTLComputePipelineState
+    private let pBlurV: MTLComputePipelineState
     private let pComposite: MTLComputePipelineState
 
     // CV Metal texture cache
@@ -64,7 +65,8 @@ final class MetalPortraitProcessor {
             }
 
             self.pDownsample = try makePS("downsample2x_box")
-            self.pBlur       = try makePS("blur_tent3")
+            self.pBlurH = try makePS("blur_gaussian_h")
+            self.pBlurV = try makePS("blur_gaussian_v")
             self.pComposite  = try makePS("compositePortrait")
         } catch {
             print("Pipeline build error: \(error)")
@@ -126,20 +128,19 @@ final class MetalPortraitProcessor {
 
         guard let cmd = queue.makeCommandBuffer() else { return nil }
 
-        // 1) Downsample & blur chain
         // L1 = down2x(input) -> blur
         encodeDownsample(src: tInput, dst: L1a, in: cmd)
-        encodeBlur(src: L1a, dst: L1b, in: cmd)
+        encodeBlur(src: L1a, dst: L1b, in: cmd)  // Now uses Gaussian
 
         // L2 = down2x(L1b) -> blur
         encodeDownsample(src: L1b, dst: L2a, in: cmd)
-        encodeBlur(src: L2a, dst: L2b, in: cmd)
+        encodeBlur(src: L2a, dst: L2b, in: cmd)  // Now uses Gaussian
 
         // L3 = down2x(L2b) -> blur (optional)
         var L3blur: MTLTexture? = nil
         if let L3a = L3a, let L3b = L3b, config.buildL3 {
             encodeDownsample(src: L2b, dst: L3a, in: cmd)
-            encodeBlur(src: L3a, dst: L3b, in: cmd)
+            encodeBlur(src: L3a, dst: L3b, in: cmd)  // Now uses Gaussian
             L3blur = L3b
         }
 
@@ -204,12 +205,30 @@ final class MetalPortraitProcessor {
     }
 
     private func encodeBlur(src: MTLTexture, dst: MTLTexture, in cmd: MTLCommandBuffer) {
-        guard let enc = cmd.makeComputeCommandEncoder() else { return }
-        enc.setComputePipelineState(pBlur)
-        enc.setTexture(src, index: 0)
-        enc.setTexture(dst, index: 1)
-        dispatch2D(enc: enc, w: dst.width, h: dst.height, pso: pBlur)
-        enc.endEncoding()
+        // Need intermediate texture for separable blur
+        guard let temp = makeTmpTex(width: dst.width, height: dst.height, format: .bgra8Unorm) else {
+            return
+        }
+
+        var radius: Float = 3.0  // Adjust this for more/less blur
+
+        // Horizontal pass
+        guard let encH = cmd.makeComputeCommandEncoder() else { return }
+        encH.setComputePipelineState(pBlurH)
+        encH.setTexture(src, index: 0)
+        encH.setTexture(temp, index: 1)
+        encH.setBytes(&radius, length: MemoryLayout<Float>.size, index: 0)
+        dispatch2D(enc: encH, w: temp.width, h: temp.height, pso: pBlurH)
+        encH.endEncoding()
+
+        // Vertical pass
+        guard let encV = cmd.makeComputeCommandEncoder() else { return }
+        encV.setComputePipelineState(pBlurV)
+        encV.setTexture(temp, index: 0)
+        encV.setTexture(dst, index: 1)
+        encV.setBytes(&radius, length: MemoryLayout<Float>.size, index: 0)
+        dispatch2D(enc: encV, w: dst.width, h: dst.height, pso: pBlurV)
+        encV.endEncoding()
     }
 
     // MARK: - Dispatch helper

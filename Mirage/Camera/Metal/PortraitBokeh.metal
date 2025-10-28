@@ -54,22 +54,59 @@ kernel void downsample2x_box(
     dst.write(c * 0.25, gid);
 }
 
-// --- Small tent blur at current scale --------------------------------------
-// src (already downsampled) -> dst (same size)
-kernel void blur_tent3(
+// Proper Gaussian blur (approximates CIGaussianBlur)
+// Two-pass separable: horizontal then vertical
+kernel void blur_gaussian_h(
     texture2d<float, access::sample> src [[texture(0)]],
     texture2d<float, access::write>  dst [[texture(1)]],
+    constant float &radius [[buffer(0)]],
     uint2 gid [[thread_position_in_grid]]
 ) {
     if (gid.x >= dst.get_width() || gid.y >= dst.get_height()) return;
 
     constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::linear);
-
     float2 size  = float2(dst.get_width(), dst.get_height());
     float2 uv    = (float2(gid) + 0.5) / size;
-    float2 texel = 1.0 / size;
+    float2 texel = float2(1.0 / size.x, 0.0);
 
-    float4 c = tent3(src, s, uv, texel);
+    // Gaussian weights for radius ~3-4 pixels
+    // For sigma = radius/2, these are approximate 9-tap weights
+    float weights[9] = {
+        0.05, 0.09, 0.12, 0.15, 0.18, 0.15, 0.12, 0.09, 0.05
+    };
+
+    float4 c = float4(0.0);
+    for (int i = 0; i < 9; i++) {
+        float offset = float(i - 4) * radius / 4.0;
+        c += src.sample(s, uv + texel * offset) * weights[i];
+    }
+
+    dst.write(c, gid);
+}
+
+kernel void blur_gaussian_v(
+    texture2d<float, access::sample> src [[texture(0)]],
+    texture2d<float, access::write>  dst [[texture(1)]],
+    constant float &radius [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.x >= dst.get_width() || gid.y >= dst.get_height()) return;
+
+    constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::linear);
+    float2 size  = float2(dst.get_width(), dst.get_height());
+    float2 uv    = (float2(gid) + 0.5) / size;
+    float2 texel = float2(0.0, 1.0 / size.y);
+
+    float weights[9] = {
+        0.05, 0.09, 0.12, 0.15, 0.18, 0.15, 0.12, 0.09, 0.05
+    };
+
+    float4 c = float4(0.0);
+    for (int i = 0; i < 9; i++) {
+        float offset = float(i - 4) * radius / 4.0;
+        c += src.sample(s, uv + texel * offset) * weights[i];
+    }
+
     dst.write(c, gid);
 }
 
@@ -132,7 +169,8 @@ kernel void compositePortrait(
 
     // Mix: keep person sharp, bg blurred
     float4 out = mix(blurred, sharp, person);
-    outTex.write(out, gid);
+    // outTex.write(out, gid);
+    outTex.write(srcL2.sample(snorm, uv), gid);
 }
 
 // Utility
