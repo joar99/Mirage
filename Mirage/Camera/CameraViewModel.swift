@@ -11,38 +11,38 @@ protocol CameraViewModelCoordinating: AnyObject {
 @MainActor
 final class CameraViewModel: NSObject, ObservableObject {
 
-    // MARK: - Properties
     @Published var captureMode: CameraCaptureMode = .portrait
     @Published var cameraPosition: CameraPosition = .back
     @Published var isReconfiguring: Bool = false
-
-    private var isProcessingBlur = false
-    private var latestMask: CVPixelBuffer?
-
-    private var isRunningVision = false
 
     let cameraView: UIView = UIView()
     private let previewImageView = UIImageView()
 
     private let sessionController = CameraSessionController()
     private let visionProcessor = VisionProcessor()
-
     private var portraitProcessor = MetalPortraitProcessor(config: .init(enableAsync: false))!
+
     private var lastVideoBuffer: CVPixelBuffer?
     private var lastDepthData: AVDepthData?
 
+    private var visionGate: VisionGate!
+    private var filterGate: FilterGate!
+
     weak var delegate: CameraViewModelCoordinating?
 
-    // MARK: - Lifecycle
     override init() {
         super.init()
         sessionController.delegate = self
         visionProcessor.delegate = self
         setupCameraView()
         checkPermissionsAndSetup()
+
+        visionGate = VisionGate(processor: visionProcessor)
+        filterGate = FilterGate(processor: portraitProcessor) { [weak self] buffer in
+            self?.displayBlurredFrame(buffer)
+        }
     }
 
-    // MARK: - Camera setup
     private func setupCameraView() {
         cameraView.backgroundColor = .black
 
@@ -57,8 +57,10 @@ final class CameraViewModel: NSObject, ObservableObject {
     }
 
     func displayBlurredFrame(_ buffer: CVPixelBuffer) {
-        guard let uiImage = portraitProcessor.makeUIImage(from: buffer) else { return }
-        self.previewImageView.image = uiImage
+        guard let uiImage = portraitProcessor.makeUIImage(from: buffer) else {
+            return
+        }
+        previewImageView.image = uiImage
     }
 
     private func checkPermissionsAndSetup() {
@@ -78,7 +80,6 @@ final class CameraViewModel: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - UI Interaction
     func updateCameraViewFrame(_ frame: CGRect) {
         previewImageView.frame = frame
         sessionController.updatePreviewFrame(frame)
@@ -103,51 +104,17 @@ final class CameraViewModel: NSObject, ObservableObject {
             await MainActor.run {
                 self.isReconfiguring = false
                 self.cameraPosition = self.cameraPosition == .back ? .front : .back
-                self.previewImageView.transform = self.cameraPosition == .front ? CGAffineTransform(scaleX: -1, y: 1) : .identity
+                self.previewImageView.transform =
+                self.cameraPosition == .front ? CGAffineTransform(scaleX: -1, y: 1) : .identity
             }
         }
     }
 
-    private func processNextFrame() {
-        guard let mask = latestMask, let videoBuffer = lastVideoBuffer, let depthData = lastDepthData else {
-            return
-        }
-
-        latestMask = nil
-
-        let safeMask = UnsafeCVPixelBufferBox(buffer: mask)
-        let safeVideoBuffer = UnsafeCVPixelBufferBox(buffer: videoBuffer)
-        let safeDepthData = UnsafeDepthDataBox(depthData: depthData)
-        let processor = self.portraitProcessor
-
-        isProcessingBlur = true
-
-        DispatchQueue.global(qos: .userInteractive).async { [weak self] in
-            guard let self else {
-                return
-            }
-
-            if let blurred = processor.applyPortraitEffect(to: safeVideoBuffer.buffer, depthData: safeDepthData.depthData, personMask: safeMask.buffer) {
-                let safeBlurred = UnsafeCVPixelBufferBox(buffer: blurred)
-
-                Task { @MainActor [weak self] in
-                    guard let self else {
-                        return
-                    }
-                    self.displayBlurredFrame(safeBlurred.buffer)
-                    self.isProcessingBlur = false
-                }
-            } else {
-                Task { @MainActor [weak self] in
-                    self?.isProcessingBlur = false
-                }
-            }
-        }
-    }
 }
 
 // MARK: - CameraSessionControllerDelegate
 
+// MARK: - CameraSessionControllerDelegate
 extension CameraViewModel: CameraSessionControllerDelegate {
     func cameraSessionControllerDidStart(_ controller: CameraSessionController) {
         print("Camera session started")
@@ -158,18 +125,16 @@ extension CameraViewModel: CameraSessionControllerDelegate {
     }
 
     func cameraSessionController(_ controller: CameraSessionController, didOutput videoBuffer: CVPixelBuffer, depthData: AVDepthData?) {
+        print("Camera spit out data")
         guard captureMode == .portrait else {
             return
         }
         lastVideoBuffer = videoBuffer
         lastDepthData = depthData
 
-        guard !isRunningVision else {
-            return
+        Task { await
+            visionGate.tryRunSegmentation(on: videoBuffer)
         }
-
-        isRunningVision = true
-        visionProcessor.runSegmentation(on: videoBuffer)
     }
 
     func cameraSessionController(_ controller: CameraSessionController, didFailWith error: Error) {
@@ -181,22 +146,27 @@ extension CameraViewModel: CameraSessionControllerDelegate {
 
 extension CameraViewModel: VisionProcessorDelegate {
     func visionProcessorDidNotDetectPerson(_ processor: VisionProcessor) {
-        isRunningVision = false
+        Task { await visionGate.done() }
     }
-    
-    func visionProcessor(_ processor: VisionProcessor, didDetectPersonWithMask mask: CVPixelBuffer) {
-        isRunningVision = false
-        latestMask = mask
 
-        guard !isProcessingBlur else {
+    func visionProcessor(_ processor: VisionProcessor, didDetectPersonWithMask mask: CVPixelBuffer) {
+        Task {
+            await visionGate.done()
+        }
+
+        guard let video = lastVideoBuffer, let depth = lastDepthData else {
             return
         }
 
-        processNextFrame()
+        Task {
+            await filterGate.tryProcess(mask: mask, video: video, depth: depth)
+        }
     }
 
     func visionProcessor(_ processor: VisionProcessor, didFailWith error: Error) {
-        print("Vision segmentation error: \(error)")
+        Task {
+            await visionGate.done()
+        }
     }
 }
 
@@ -206,20 +176,3 @@ extension CameraViewModel {
         return CameraViewModel()
     }
 }
-
-/*private func processFrameForBlurEffect() {
-    guard let mask = latestMask, let videoBuffer = lastVideoBuffer, let depthData = lastDepthData else {
-        return
-    }
-
-    /// Wrap them in sendables
-    let sendableMask = UnsafeCVPixelBufferBox(buffer: mask)
-    let sendableVideo = UnsafeCVPixelBufferBox(buffer: videoBuffer)
-    let sendableDepthdata = UnsafeDepthDataBox(depthData: depthData)
-
-    let portraitProcessor = self.portraitProcessor
-
-    isProcessingBlur = true
-
-
-}*/
