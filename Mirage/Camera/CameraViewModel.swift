@@ -208,16 +208,3 @@ extension CameraViewModel {
         return CameraViewModel()
     }
 }
-
-
-/*
- private func processNextFrame() {
-     guard let mask = latestMask, let videoBuffer = lastVideoBuffer, let depthData = lastDepthData else {
-         return
-     }
-
-     displayBlurredFrame(videoBuffer)
-     isProcessingBlur = false
-
- }
- */
