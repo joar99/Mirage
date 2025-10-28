@@ -111,16 +111,6 @@ final class CameraViewModel: NSObject, ObservableObject {
         }
     }
 
-    /*private func processNextFrame() {
-        guard let mask = latestMask, let videoBuffer = lastVideoBuffer, let depthData = lastDepthData else {
-            return
-        }
-
-        displayBlurredFrame(videoBuffer)
-        isProcessingBlur = false
-
-    }*/
-
     private func processNextFrame() {
         guard let mask = latestMask, let videoBuffer = lastVideoBuffer, let depthData = lastDepthData else {
             return
