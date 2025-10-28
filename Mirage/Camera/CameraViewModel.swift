@@ -27,7 +27,8 @@ final class CameraViewModel: NSObject, ObservableObject {
     private let sessionController = CameraSessionController()
     private let visionProcessor = VisionProcessor()
 
-    private var portraitProcessor = PortraitEffectProcessor()
+    // private var portraitProcessor = PortraitEffectProcessor()
+    private var portraitProcessor = MetalPortraitProcessor(config: .init(enableAsync: false, bokehStrength: 1.0))!
     private var lastVideoBuffer: CVPixelBuffer?
     private var lastDepthData: AVDepthData?
 
@@ -99,7 +100,7 @@ final class CameraViewModel: NSObject, ObservableObject {
 
     func didTapToggleCameraPosition() {
         isReconfiguring = true
-        portraitProcessor.resetTemporalSmoothing()
+        // portraitProcessor.resetTemporalSmoothing()
         Task {
             await sessionController.switchCamera()
             await MainActor.run {
@@ -109,6 +110,16 @@ final class CameraViewModel: NSObject, ObservableObject {
             }
         }
     }
+
+    /*private func processNextFrame() {
+        guard let mask = latestMask, let videoBuffer = lastVideoBuffer, let depthData = lastDepthData else {
+            return
+        }
+
+        displayBlurredFrame(videoBuffer)
+        isProcessingBlur = false
+
+    }*/
 
     private func processNextFrame() {
         guard let mask = latestMask, let videoBuffer = lastVideoBuffer, let depthData = lastDepthData else {
@@ -207,3 +218,16 @@ extension CameraViewModel {
         return CameraViewModel()
     }
 }
+
+
+/*
+ private func processNextFrame() {
+     guard let mask = latestMask, let videoBuffer = lastVideoBuffer, let depthData = lastDepthData else {
+         return
+     }
+
+     displayBlurredFrame(videoBuffer)
+     isProcessingBlur = false
+
+ }
+ */
