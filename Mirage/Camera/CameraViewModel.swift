@@ -27,7 +27,6 @@ final class CameraViewModel: NSObject, ObservableObject {
     private let sessionController = CameraSessionController()
     private let visionProcessor = VisionProcessor()
 
-    // private var portraitProcessor = PortraitEffectProcessor()
     private var portraitProcessor = MetalPortraitProcessor(config: .init(enableAsync: false))!
     private var lastVideoBuffer: CVPixelBuffer?
     private var lastDepthData: AVDepthData?
@@ -70,8 +69,7 @@ final class CameraViewModel: NSObject, ObservableObject {
             AVCaptureDevice.requestAccess(for: .video) { granted in
                 if granted {
                     Task { @MainActor in
-                        self.sessionController.setupSession(mode: self.captureMode,
-                                                            position: self.cameraPosition)
+                        self.sessionController.setupSession(mode: self.captureMode, position: self.cameraPosition)
                     }
                 }
             }
@@ -100,7 +98,6 @@ final class CameraViewModel: NSObject, ObservableObject {
 
     func didTapToggleCameraPosition() {
         isReconfiguring = true
-        // portraitProcessor.resetTemporalSmoothing()
         Task {
             await sessionController.switchCamera()
             await MainActor.run {
@@ -115,6 +112,8 @@ final class CameraViewModel: NSObject, ObservableObject {
         guard let mask = latestMask, let videoBuffer = lastVideoBuffer, let depthData = lastDepthData else {
             return
         }
+
+        latestMask = nil
 
         let safeMask = UnsafeCVPixelBufferBox(buffer: mask)
         let safeVideoBuffer = UnsafeCVPixelBufferBox(buffer: videoBuffer)
@@ -137,10 +136,6 @@ final class CameraViewModel: NSObject, ObservableObject {
                     }
                     self.displayBlurredFrame(safeBlurred.buffer)
                     self.isProcessingBlur = false
-
-                    if self.latestMask != nil {
-                        self.processNextFrame()
-                    }
                 }
             } else {
                 Task { @MainActor [weak self] in
@@ -163,6 +158,9 @@ extension CameraViewModel: CameraSessionControllerDelegate {
     }
 
     func cameraSessionController(_ controller: CameraSessionController, didOutput videoBuffer: CVPixelBuffer, depthData: AVDepthData?) {
+        guard captureMode == .portrait else {
+            return
+        }
         lastVideoBuffer = videoBuffer
         lastDepthData = depthData
 
@@ -208,3 +206,20 @@ extension CameraViewModel {
         return CameraViewModel()
     }
 }
+
+/*private func processFrameForBlurEffect() {
+    guard let mask = latestMask, let videoBuffer = lastVideoBuffer, let depthData = lastDepthData else {
+        return
+    }
+
+    /// Wrap them in sendables
+    let sendableMask = UnsafeCVPixelBufferBox(buffer: mask)
+    let sendableVideo = UnsafeCVPixelBufferBox(buffer: videoBuffer)
+    let sendableDepthdata = UnsafeDepthDataBox(depthData: depthData)
+
+    let portraitProcessor = self.portraitProcessor
+
+    isProcessingBlur = true
+
+
+}*/
