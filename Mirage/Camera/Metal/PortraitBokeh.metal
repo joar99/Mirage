@@ -36,7 +36,7 @@ kernel void downsample2x_box(
 ) {
     if (gid.x >= dst.get_width() || gid.y >= dst.get_height()) return;
 
-    constexpr sampler s(coord::pixel, address::clamp_to_edge, filter::linear);
+    constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::linear);
 
     // Map destination pixel coords to source
     float2 srcSize = float2(src.get_width(), src.get_height());
