@@ -11,8 +11,18 @@ protocol CameraViewModelCoordinating: AnyObject {
 @MainActor
 final class CameraViewModel: NSObject, ObservableObject {
 
-    @Published var captureMode: CameraCaptureMode = .portrait
-    @Published var cameraPosition: CameraPosition = .back
+    @Published var captureMode: CameraCaptureMode = .portrait {
+        didSet {
+            previewImageView.image = nil
+        }
+    }
+
+    @Published var cameraPosition: CameraPosition = .back {
+        didSet {
+            previewImageView.image = nil
+        }
+    }
+
     @Published var isReconfiguring: Bool = false
 
     let cameraView: UIView = UIView()
@@ -57,6 +67,9 @@ final class CameraViewModel: NSObject, ObservableObject {
     }
 
     func displayBlurredFrame(_ buffer: CVPixelBuffer) {
+        guard captureMode == .portrait, cameraPosition == .front else {
+            return
+        }
         guard let uiImage = portraitProcessor.makeUIImage(from: buffer) else {
             return
         }
@@ -104,8 +117,7 @@ final class CameraViewModel: NSObject, ObservableObject {
             await MainActor.run {
                 self.isReconfiguring = false
                 self.cameraPosition = self.cameraPosition == .back ? .front : .back
-                self.previewImageView.transform =
-                self.cameraPosition == .front ? CGAffineTransform(scaleX: -1, y: 1) : .identity
+                self.previewImageView.transform = self.cameraPosition == .front ? CGAffineTransform(scaleX: -1, y: 1) : .identity
             }
         }
     }
@@ -117,28 +129,27 @@ final class CameraViewModel: NSObject, ObservableObject {
 // MARK: - CameraSessionControllerDelegate
 extension CameraViewModel: CameraSessionControllerDelegate {
     func cameraSessionControllerDidStart(_ controller: CameraSessionController) {
-        print("Camera session started")
+
     }
 
     func cameraSessionControllerDidStop(_ controller: CameraSessionController) {
-        print("Camera session stopped")
+
     }
 
     func cameraSessionController(_ controller: CameraSessionController, didOutput videoBuffer: CVPixelBuffer, depthData: AVDepthData?) {
-        print("Camera spit out data")
-        guard captureMode == .portrait else {
+        guard captureMode == .portrait, cameraPosition == .front else {
             return
         }
         lastVideoBuffer = videoBuffer
         lastDepthData = depthData
 
-        Task { await
-            visionGate.tryRunSegmentation(on: videoBuffer)
+        Task {
+            await visionGate.tryRunSegmentation(on: videoBuffer)
         }
     }
 
     func cameraSessionController(_ controller: CameraSessionController, didFailWith error: Error) {
-        print("Camera error: \(error)")
+
     }
 }
 
