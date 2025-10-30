@@ -75,9 +75,17 @@ final class MetalPortraitProcessor {
         self.textureCache = tc
     }
 
-    // MARK: - Public API
-    func applyPortraitEffect(to videoBuffer: CVPixelBuffer, depthData: AVDepthData?, personMask: CVPixelBuffer) -> CVPixelBuffer? {
+    func applyBookehBlur(to videoBuffer: CVPixelBuffer, capturableObject: CameraCapturable) -> CVPixelBuffer? {
+        switch capturableObject {
+        case .person(depthData: let depthData, personMask: let personMask):
+            return applyBookehBlurToPersons(videoBuffer, depthData, personMask)
+        case .inanimateObject(depthData: let depthData):
+            /// TODO: Allow for capture of inanimate objects without a mask
+            return nil
+        }
+    }
 
+    private func applyBookehBlurToPersons(_ videoBuffer: CVPixelBuffer, _ depthData: AVDepthData, _ personMask: CVPixelBuffer) -> CVPixelBuffer? {
         let width  = CVPixelBufferGetWidth(videoBuffer)
         let height = CVPixelBufferGetHeight(videoBuffer)
 
@@ -108,38 +116,29 @@ final class MetalPortraitProcessor {
         encodeDownsample(src: L1temp, dst: L2a, in: cmd)
         encodeBlur(src: L2a, dst: L2b, in: cmd)
 
-        do {
-            guard let enc = cmd.makeComputeCommandEncoder() else {
-                return nil
-            }
-            enc.setComputePipelineState(pComposite)
-
-            enc.setTexture(tInput, index: 0)
-            enc.setTexture(L2b, index: 1)
-            enc.setTexture(tMask, index: 2)
-            enc.setTexture(tOutput, index: 3)
-
-            var invSize = SIMD2<Float>(1.0 / Float(width), 1.0 / Float(height))
-            enc.setBytes(&invSize, length: MemoryLayout<SIMD2<Float>>.size, index: 0)
-
-            dispatch2D(enc: enc, w: width, h: height, pso: pComposite)
-            enc.endEncoding()
+        guard let enc = cmd.makeComputeCommandEncoder() else {
+            return nil
         }
+        enc.setComputePipelineState(pComposite)
 
-        if config.enableAsync {
-            cmd.addCompletedHandler { [weak self] _ in
-                self?.lastCompletedBuffer = outputBuffer
-            }
-            cmd.commit()
-            return lastCompletedBuffer ?? outputBuffer
-        } else {
-            cmd.commit()
-            cmd.waitUntilCompleted()
-            return outputBuffer
-        }
+        enc.setTexture(tInput, index: 0)
+        enc.setTexture(L2b, index: 1)
+        enc.setTexture(tMask, index: 2)
+        enc.setTexture(tOutput, index: 3)
+
+        var invSize = SIMD2<Float>(1.0 / Float(width), 1.0 / Float(height))
+        enc.setBytes(&invSize, length: MemoryLayout<SIMD2<Float>>.size, index: 0)
+
+        dispatch2D(enc: enc, w: width, h: height, pso: pComposite)
+        enc.endEncoding()
+
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return outputBuffer
     }
 
     // MARK: - UIImage helper
+
     func makeUIImage(from buffer: CVPixelBuffer) -> UIImage? {
         let ci = CIImage(cvPixelBuffer: buffer)
         let ctx = CIContext(options: [.useSoftwareRenderer: false])
@@ -149,7 +148,6 @@ final class MetalPortraitProcessor {
         return UIImage(cgImage: cg, scale: 1.0, orientation: .right)
     }
 
-    // MARK: - Encoders
     private func encodeDownsample(src: MTLTexture, dst: MTLTexture, in cmd: MTLCommandBuffer) {
         guard let enc = cmd.makeComputeCommandEncoder() else {
             return
@@ -193,7 +191,6 @@ final class MetalPortraitProcessor {
         enc.dispatchThreadgroups(groups, threadsPerThreadgroup: tpg)
     }
 
-    // MARK: - Textures & Pools
     private func makeTex(from pixelBuffer: CVPixelBuffer, pixelFormat: MTLPixelFormat) -> MTLTexture? {
         let width  = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)

@@ -17,9 +17,11 @@ actor FilterGate {
 
         busy = true
         Task.detached(priority: .userInitiated) {
-            if let blurred = self.processor.applyPortraitEffect(to: video, depthData: depth, personMask: mask) {
+            let capturable = CameraCapturable.person(depthData: depth, personMask: mask)
+
+            if let blurredImage = self.processor.applyBookehBlur(to: video, capturableObject: capturable) {
                 await MainActor.run {
-                    self.onResult(blurred)
+                    self.onResult(blurredImage)
                 }
                 await self.done()
             }
