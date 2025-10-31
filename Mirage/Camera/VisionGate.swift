@@ -8,12 +8,12 @@ actor VisionGate {
         self.processor = processor
     }
 
-    func tryRunSegmentation(on buffer: CVPixelBuffer) {
+    func tryRunSegmentation(on buffer: CVPixelBuffer, for segmentableObjectType: SegmentableObject) {
         guard !busy else {
             return
         }
         busy = true
-        processor.runSegmentation(on: buffer)
+        processor.runSegmentation(on: buffer, for: segmentableObjectType)
     }
 
     func done() {

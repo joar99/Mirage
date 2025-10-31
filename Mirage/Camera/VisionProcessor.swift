@@ -9,9 +9,15 @@ public struct UnsafeCVPixelBufferBox: @unchecked Sendable {
     let buffer: CVPixelBuffer
 }
 
+enum SegmentableObject {
+    case person
+    case inanimateObject
+}
+
 @MainActor
 protocol VisionProcessorDelegate: AnyObject {
     func visionProcessor(_ processor: VisionProcessor, didDetectPersonWithMask mask: CVPixelBuffer)
+    func visionProcessor(_ processor: VisionProcessor, didDetectObjectsInScene mask: CVPixelBuffer)
     func visionProcessor(_ processor: VisionProcessor, didFailWith error: Error)
     func visionProcessorDidNotDetectPerson(_ processor: VisionProcessor)
 }
@@ -22,69 +28,88 @@ final class VisionProcessor {
     weak var delegate: VisionProcessorDelegate?
 
     private let visionQueue = DispatchQueue(label: "camera.vision")
-    private var segmentationRequest: VNGeneratePersonSegmentationRequest?
+    private var segmentableObject: SegmentableObject = .person
+    private var personRequest: VNGeneratePersonSegmentationRequest?
+    private var objectRequest: VNGenerateObjectnessBasedSaliencyImageRequest?
 
     init() {
         setupVision()
     }
 
     private func setupVision() {
-        segmentationRequest = VNGeneratePersonSegmentationRequest()
-        segmentationRequest?.qualityLevel = .balanced
-        segmentationRequest?.outputPixelFormat = kCVPixelFormatType_OneComponent8
+        personRequest = VNGeneratePersonSegmentationRequest()
+        personRequest?.qualityLevel = .balanced
+        personRequest?.outputPixelFormat = kCVPixelFormatType_OneComponent8
         if let latestRevision = VNGeneratePersonSegmentationRequest.supportedRevisions.last {
-            segmentationRequest?.revision = latestRevision
+            personRequest?.revision = latestRevision
         }
+
+        objectRequest = VNGenerateObjectnessBasedSaliencyImageRequest()
     }
 
-    nonisolated func runSegmentation(on pixelBuffer: CVPixelBuffer) {
+    nonisolated func runSegmentation(on pixelBuffer: CVPixelBuffer, for segmentableObject: SegmentableObject) {
         let safeInput = UnsafeCVPixelBufferBox(buffer: pixelBuffer)
 
         Task { @MainActor [weak self] in
-            guard let self, let request = self.segmentationRequest else {
+
+            guard let self else {
                 return
             }
 
-            self.visionQueue.async { [weak self, request] in
-                guard let self else {
+            let segmentationRequest: VNRequest
+
+            switch segmentableObject {
+            case .person:
+                guard let request = self.personRequest else {
                     return
                 }
+                segmentationRequest = request
+            case .inanimateObject:
+                guard let request = self.objectRequest else {
+                    return
+                }
+                segmentationRequest = request
+            }
+
+            self.visionQueue.async { [weak self, segmentationRequest] in
+                guard let self else { return }
 
                 let handler = VNImageRequestHandler(cvPixelBuffer: safeInput.buffer,
                                                     orientation: .up,
                                                     options: [:])
+
                 do {
-                    try handler.perform([request])
+                    try handler.perform([segmentationRequest])
 
-                    guard let result = request.results?.first as? VNPixelBufferObservation else {
-                        return
-                    }
-                    let mask = result.pixelBuffer
-
-                    let detected = self.analyzePersonMask(mask)
-                    guard detected else {
-                        Task { @MainActor [weak self] in
-                            guard let self else {
-                                return
-                            }
-                            self.delegate?.visionProcessorDidNotDetectPerson(self)
-                        }
-                        return
-                    }
-
-                    let safeMask = UnsafeCVPixelBufferBox(buffer: mask)
-                    Task { @MainActor [weak self] in
-                        guard let self else {
+                    switch segmentableObject {
+                    case .person:
+                        guard let result = segmentationRequest.results?.first as? VNPixelBufferObservation else { return }
+                        let mask = result.pixelBuffer
+                        let detected = self.analyzePersonMask(mask)
+                        guard detected else {
                             return
                         }
-                        self.delegate?.visionProcessor(self, didDetectPersonWithMask: safeMask.buffer)
+
+                        let safeMask = UnsafeCVPixelBufferBox(buffer: mask)
+
+                        Task { @MainActor in
+                            self.delegate?.visionProcessor(self, didDetectPersonWithMask: safeMask.buffer)
+                        }
+
+                    case .inanimateObject:
+                        guard let saliencyObservation = segmentationRequest.results?.first as? VNSaliencyImageObservation else {
+                            return
+                        }
+                        let pixelBuffer = saliencyObservation.pixelBuffer
+                        let safeMask = UnsafeCVPixelBufferBox(buffer: pixelBuffer)
+
+                        Task { @MainActor in
+                            self.delegate?.visionProcessor(self, didDetectObjectsInScene: safeMask.buffer)
+                        }
                     }
 
                 } catch {
-                    Task { @MainActor [weak self] in
-                        guard let self else {
-                            return
-                        }
+                    Task { @MainActor in
                         self.delegate?.visionProcessor(self, didFailWith: error)
                     }
                 }
