@@ -38,21 +38,22 @@ struct CameraView: View {
 
             makeCameraPreview()
 
-            VStack {
+            ZStack {
                 makeCaptureButtonView()
                     .padding(.bottom, 64)
+
+                HStack {
+                    Spacer()
+                    makeCameraFlipButton()
+                        .padding(.bottom, 64)
+                        .padding(.trailing, 32)
+                }
             }
             .frame(maxHeight: 200)
             .frame(maxWidth: .infinity)
             .background(Color.black.opacity(0.6))
         }
         .background(Color.black)
-        .onAppear {
-            viewModel.startSession()
-        }
-        .onDisappear {
-            viewModel.stopSession()
-        }
         .ignoresSafeArea(edges: .all)
     }
 
@@ -106,6 +107,13 @@ struct CameraView: View {
         .padding(.horizontal)
     }
 
+    private func makeCameraFlipButton() -> some View {
+        CameraFlipButton {
+            viewModel.didTapToggleCameraPosition()
+        }
+        .disabled(viewModel.isReconfiguring)
+    }
+
     private func makeCaptureButtonView() -> some View {
         Button {
 
@@ -121,4 +129,38 @@ struct CameraView: View {
 #Preview {
     let cameraViewModel = CameraViewModel.mockModel()
     CameraView(viewModel: cameraViewModel)
+}
+
+struct CameraFlipButton: View {
+    @State private var isAnimating = false
+    var action: () -> Void
+
+    var body: some View {
+        Button {
+            let generator = UIImpactFeedbackGenerator(style: .medium)
+            generator.impactOccurred()
+
+            withAnimation(.easeInOut(duration: 0.25)) {
+                isAnimating = true
+            }
+
+            // reset the animation after a short delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    isAnimating = false
+                }
+            }
+
+            // perform the actual camera flip
+            action()
+
+        } label: {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 20, weight: .medium))
+                .foregroundColor(.white)
+                .rotationEffect(.degrees(isAnimating ? 180 : 0))
+                .scaleEffect(isAnimating ? 1.2 : 1.0)
+                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isAnimating)
+        }
+    }
 }

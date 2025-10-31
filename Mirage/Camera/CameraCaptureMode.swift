@@ -1,6 +1,6 @@
 
 /// Defines the different modes of camera capture.
-enum CameraCaptureMode: CaseIterable, Identifiable {
+enum CameraCaptureMode: String, CaseIterable, Identifiable, Equatable, Sendable {
     case normal
     case portrait
 
