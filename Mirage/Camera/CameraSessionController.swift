@@ -118,6 +118,8 @@ final class CameraSessionController: NSObject {
                     self.captureSession.addOutput(self.videoOutput)
                 }
 
+                // Portrait Effects Matte is available via AVCapturePhotoOutput, not AVCaptureVideoDataOutput. Add a photo output if needed.
+
                 self.depthOutput.isFilteringEnabled = true
                 if self.captureSession.canAddOutput(self.depthOutput) {
                     self.captureSession.addOutput(self.depthOutput)
@@ -220,3 +222,4 @@ extension CameraSessionController: AVCaptureDataOutputSynchronizerDelegate {
         }
     }
 }
+

@@ -144,7 +144,7 @@ extension CameraViewModel: CameraSessionControllerDelegate {
         lastDepthData = depthData
 
         Task {
-            await visionGate.tryRunSegmentation(on: videoBuffer, for: .person)
+            await visionGate.tryRunSegmentation(on: videoBuffer)
         }
     }
 
@@ -160,10 +160,6 @@ extension CameraViewModel: VisionProcessorDelegate {
         Task {
             await visionGate.done()
         }
-    }
-
-    func visionProcessor(_ processor: VisionProcessor, didDetectObjectsInScene mask: CVPixelBuffer) {
-        return
     }
 
     func visionProcessor(_ processor: VisionProcessor, didDetectPersonWithMask mask: CVPixelBuffer) {
