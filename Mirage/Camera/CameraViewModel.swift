@@ -32,9 +32,6 @@ final class CameraViewModel: NSObject, ObservableObject {
     private let visionProcessor = VisionProcessor()
     private var portraitProcessor = MetalPortraitProcessor(config: .init(enableAsync: false))!
 
-    private var lastVideoBuffer: CVPixelBuffer?
-    private var lastDepthData: AVDepthData?
-
     private var visionGate: VisionGate!
     private var filterGate: FilterGate!
 
@@ -137,14 +134,14 @@ extension CameraViewModel: CameraSessionControllerDelegate {
     }
 
     func cameraSessionController(_ controller: CameraSessionController, didOutput videoBuffer: CVPixelBuffer, depthData: AVDepthData?) {
-        guard captureMode == .portrait, cameraPosition == .front else {
+        guard captureMode == .portrait,
+              cameraPosition == .front,
+              let depthData = depthData else {
             return
         }
-        lastVideoBuffer = videoBuffer
-        lastDepthData = depthData
 
         Task {
-            await visionGate.tryRunSegmentation(on: videoBuffer)
+            await visionGate.tryRunSegmentation(on: videoBuffer, depthData: depthData)
         }
     }
 
@@ -162,17 +159,13 @@ extension CameraViewModel: VisionProcessorDelegate {
         }
     }
 
-    func visionProcessor(_ processor: VisionProcessor, didDetectPersonWithMask mask: CVPixelBuffer) {
+    func visionProcessor(_ processor: VisionProcessor, didDetectPersonWithMask mask: CVPixelBuffer, videoBuffer: CVPixelBuffer, depthData: AVDepthData) {
         Task {
             await visionGate.done()
         }
 
-        guard let video = lastVideoBuffer, let depth = lastDepthData else {
-            return
-        }
-
         Task {
-            await filterGate.tryProcess(mask: mask, video: video, depth: depth)
+            await filterGate.tryProcess(mask: mask, video: videoBuffer, depth: depthData)
         }
     }
 
