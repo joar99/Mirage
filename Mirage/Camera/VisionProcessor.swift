@@ -11,7 +11,7 @@ public struct UnsafeCVPixelBufferBox: @unchecked Sendable {
 
 @MainActor
 protocol VisionProcessorDelegate: AnyObject {
-    func visionProcessor(_ processor: VisionProcessor, didDetectPersonWithMask mask: CVPixelBuffer)
+    func visionProcessor(_ processor: VisionProcessor, didDetectPersonWithMask mask: CVPixelBuffer, videoBuffer: CVPixelBuffer, depthData: AVDepthData)
     func visionProcessor(_ processor: VisionProcessor, didFailWith error: Error)
     func visionProcessorDidNotDetectPerson(_ processor: VisionProcessor)
 }
@@ -37,8 +37,9 @@ final class VisionProcessor {
         }
     }
 
-    nonisolated func runSegmentation(on pixelBuffer: CVPixelBuffer) {
+    nonisolated func runSegmentation(on pixelBuffer: CVPixelBuffer, depthData: AVDepthData) {
         let safeInput = UnsafeCVPixelBufferBox(buffer: pixelBuffer)
+        let safeDepth = UnsafeDepthDataBox(depthData: depthData)
 
         Task { @MainActor [weak self] in
 
@@ -51,7 +52,7 @@ final class VisionProcessor {
             }
             let segmentationRequest: VNRequest = personRequest
 
-            self.visionQueue.async { [weak self, segmentationRequest] in
+            self.visionQueue.async { [weak self, segmentationRequest, safeInput, safeDepth] in
                 guard let self else { return }
 
                 let handler = VNImageRequestHandler(cvPixelBuffer: safeInput.buffer,
@@ -71,7 +72,10 @@ final class VisionProcessor {
                     let safeMask = UnsafeCVPixelBufferBox(buffer: mask)
 
                     Task { @MainActor in
-                        self.delegate?.visionProcessor(self, didDetectPersonWithMask: safeMask.buffer)
+                        self.delegate?.visionProcessor(self,
+                                                      didDetectPersonWithMask: safeMask.buffer,
+                                                      videoBuffer: safeInput.buffer,
+                                                      depthData: safeDepth.depthData)
                     }
 
                 } catch {
