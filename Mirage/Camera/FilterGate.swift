@@ -1,13 +1,20 @@
 import AVFoundation
 
-actor FilterGate {
-    private var busy = false
-    private let processor: MetalPortraitProcessor
-    private let onResult: @MainActor (CVPixelBuffer) -> Void
+@MainActor
+protocol FilterGateDelegate: AnyObject {
+    func filterGate(_ filterGate: FilterGate, didCreateBlurredImage blurredImage: CVPixelBuffer)
+}
 
-    init(processor: MetalPortraitProcessor, onResult: @escaping @MainActor (CVPixelBuffer) -> Void) {
-        self.processor = processor
-        self.onResult = onResult
+@MainActor
+class FilterGate {
+
+    private var busy = false
+    private let metalPortraitProcessor: MetalPortraitProcessor
+
+    weak var delegate: FilterGateDelegate?
+
+    init(metalPortraitProcessor: MetalPortraitProcessor) {
+        self.metalPortraitProcessor = metalPortraitProcessor
     }
 
     func tryProcess(mask: CVPixelBuffer, video: CVPixelBuffer, depth: AVDepthData) {
@@ -16,19 +23,13 @@ actor FilterGate {
         }
 
         busy = true
-        Task.detached(priority: .userInitiated) {
-            let capturable = CameraCapturable.person(depthData: depth, personMask: mask)
 
-            if let blurredImage = self.processor.applyBookehBlur(to: video, capturableObject: capturable) {
-                await MainActor.run {
-                    self.onResult(blurredImage)
-                }
-                await self.done()
-            }
+        let capturable = CameraCapturable.person(depthData: depth, personMask: mask)
+
+        if let blurredImage = metalPortraitProcessor.applyBookehBlur(to: video, capturableObject: capturable) {
+            delegate?.filterGate(self, didCreateBlurredImage: blurredImage)
         }
-    }
 
-    private func done() {
         busy = false
     }
 }
