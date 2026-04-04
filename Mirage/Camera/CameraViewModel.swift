@@ -32,22 +32,26 @@ final class CameraViewModel: NSObject, ObservableObject {
     private let visionProcessor = VisionProcessor()
     private var portraitProcessor = MetalPortraitProcessor(config: .init(enableAsync: false))!
 
-    private var visionGate: VisionGate!
-    private var filterGate: FilterGate!
+    private var lastVideoBuffer: CVPixelBuffer?
+    private var lastDepthData: AVDepthData?
+
+    private let visionGate: VisionGate
+    private var filterGate: FilterGate
 
     weak var delegate: CameraViewModelCoordinating?
 
     override init() {
+
+        visionGate = VisionGate(processor: visionProcessor)
+        filterGate = FilterGate(metalPortraitProcessor: portraitProcessor)
+
         super.init()
         sessionController.delegate = self
         visionProcessor.delegate = self
+        filterGate.delegate = self
         setupCameraView()
         checkPermissionsAndSetup()
 
-        visionGate = VisionGate(processor: visionProcessor)
-        filterGate = FilterGate(processor: portraitProcessor) { [weak self] buffer in
-            self?.displayBlurredFrame(buffer)
-        }
     }
 
     private func setupCameraView() {
@@ -164,15 +168,24 @@ extension CameraViewModel: VisionProcessorDelegate {
             await visionGate.done()
         }
 
-        Task {
-            await filterGate.tryProcess(mask: mask, video: videoBuffer, depth: depthData)
+        guard let video = lastVideoBuffer, let depth = lastDepthData else {
+            return
         }
+
+        filterGate.tryProcess(mask: mask, video: video, depth: depth)
     }
 
     func visionProcessor(_ processor: VisionProcessor, didFailWith error: Error) {
         Task {
             await visionGate.done()
         }
+    }
+}
+
+// MARK: - FilterGateDelegate
+extension CameraViewModel: FilterGateDelegate {
+    func filterGate(_ filterGate: FilterGate, didCreateBlurredImage blurredImage: CVPixelBuffer) {
+        displayBlurredFrame(blurredImage)
     }
 }
 
